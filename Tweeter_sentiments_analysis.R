@@ -22,7 +22,7 @@ trends_df_sort$trend # to see all 40 trending topics
 # lets perform the timeseries analysis next
 # apply the necessary filter to obtain a manageable file
 # #SaturdayThoughts
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 10000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
 # check oout what information is available in the tweeter data we obtained
 colnames(covid19_st)
@@ -40,33 +40,55 @@ head(twt_txt_no_url)
 twt_chrs <- gsub("[^A-Za-z]"," ", twt_txt_no_url) # only keep the upper and lower case characters; replace everything else with a space
 head(twt_chrs)
 
+# lets count the number of mentions and hashtags
 twts_tidy <- covid_twts %>%
   mutate(text = twt_chrs) %>%
   mutate(mentions = lengths(mentions_user_id)) %>%
   mutate(hashtags = lengths(hashtags))
+# notice that most of the tweets don't have any mentions with "NA" in place so we need to properly account for that below
+twts_inds1 <- which(is.na(covid_twts$mentions_user_id)) # find which mentions are non-existent
+twts_tidy$mentions[twts_inds1] <- 0 # correct the number of mentions entries for those indeces
+# also note that each tweet has at least one hashtag since we specifically searched for #COVID19 tweets to begin with!
 
-retwted_df <- data.frame(retwted$status_id,retwted$screen_name,twt_chrs,retwted$retweet_count,retwted$followers_count,retwted$friends_count)
-
-twts_tidy <- as_tibble(retwted_df)
 # change the column names for convinience
 twts_tidy <- twts_tidy %>% 
-  dplyr::rename(id = retwted.status_id, user_name = retwted.screen_name, text = twt_chrs, retweets = retwted.retweet_count, friends = retwted.friends_count, followers = retwted.followers_count)
+  dplyr::rename(id = status_id, retweets = retweet_count, friends = friends_count, followers = followers_count)
 colnames(twts_tidy)
+# remove the columns that we no longer need
+twts_tidy <- twts_tidy %>% 
+  select(-c(screen_name,mentions_user_id))
 
-twts_tokens <- twts_tidy %>%
-  unnest_tokens(word,text)
+# unnest tokens and remove stop words
+twts_clean <- twts_tidy %>%
+  unnest_tokens(word,text) %>%
+  anti_join(get_stopwords())
 
-# remove the stop words
-twts_clean <- twts_tokens %>%
-  anti_join(get_stopwords()) %>%
-  mutate(golden = followers/friends)
+# let's look at the most common words used
+common_words <- twts_clean %>%
+  count(word) %>%
+  arrange(desc(n))
+
+common_words$word
+  
+# remove unique stop words that don't add any meaning
+uniq_sw <- data.frame(word = c("s","amp","t", "via", "m", "re", "don", "ve", "q", "gt", "o", "pm"))
+# 
+twts_clean <- twts_clean %>% 
+   anti_join(uniq_sw, by = "word")
+
+# let's see which words are the most popular in tweets
+pal <- brewer.pal(8,"Dark2")
+
+twts_clean %>%
+  count(word) %>%
+  with(wordcloud(word,n,random.order = FALSE, max.words = 100, colors = pal))
 
 # now lets assign a quantitative score to tweets to determine whether they are positive or negative
 # we will use the afinn lexicon here
 
 twts_afinn <- twts_clean %>%
   inner_join(get_sentiments("afinn"))
-# mutate(golden = followers/friends)
+
 # now lets assign the sentiment score to each unique tweet
 
 # twts_sentiment <- twts_afinn %>%
@@ -77,22 +99,41 @@ twts_afinn <- twts_clean %>%
 #   ungroup()
 
 afinn_sentiment <- twts_afinn %>%
-  group_by(id,retweets,followers,friends) %>%
+  group_by(id,retweets,followers,friends,hashtags,mentions) %>%
   summarize(score = sum(value)) %>%
-  #mutate(score = sum(value)) %>%
-  arrange(desc(score))# %>%
-#ungroup()
+  arrange(desc(score))
 
-# changethe retweets into binary form: 0/1
+# let's look at some of the most positive tweets to get inspiration for your day!
+covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[1])]
+covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[2])]
+covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[3])]
+# those are indeed very positive tweets 
+
+# change the retweets into binary form: 0/1
 afinn_binary <- afinn_sentiment %>%
   mutate(retwtTF = ifelse(retweets > 0, TRUE, FALSE))
+
+# change the retweets into 5 CATegories that define how "viral the tweet" is: "N (none)":0; "S (small)":1-10; "M (medium)":11-100; "L (large)":101-1,000; "V (viral)":>1,000
+afinn_five <- afinn_sentiment %>%
+  mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:1000, "L","V")))))
+
+# lets convert the categories for retweets into fanked factors since there is an inherent order to them
+afinn_fiveRK <- afinn_five %>%
+  mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
+
+afinn_fiveRK %>%
+  ggplot(aes(retwtCAT)) +
+  geom_bar() +
+  xlab("Retweet category") +
+  ggtitle("Distribution of the #COVID19 tweets into retweet categories")
 
 # now we have the data set ready for running the logistic regression on it
 tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6)) # split into training and test subsets
 train <- afinn_binary[tr,]
 test <- afinn_binary[-tr,]
 
-model1 <- glm(retwtTF ~ followers + friends + score, data = train, family = "binomial")
+model1 <- glm(retwtTF ~ followers + friends + score + mentions + hashtags, data = train, family = "binomial")
+summary(model1)
 p <- predict(model1,test, type = "response")
 summary(p)
 cl <- ifelse(p > 0.5, TRUE, FALSE)
