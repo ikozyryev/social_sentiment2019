@@ -22,23 +22,29 @@ trends_df_sort$trend # to see all 40 trending topics
 # lets perform the timeseries analysis next
 # apply the necessary filter to obtain a manageable file
 # #SaturdayThoughts
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 10000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
 # check oout what information is available in the tweeter data we obtained
-# colnames(covid19_st)
-# determine which tweets have been retweeted at least ones
-retwt_inds <- which(covid19_st$retweet_count>=0)
+colnames(covid19_st)
+# determine which tweets have been retweeted at least ones if you need to study just those
+retwt_inds <- which(covid19_st$retweet_count>0)
 # select only tweets which have been retweeted
 # keep the status_id in order to account for the case if one use tweeted multiple times as a unique identifier 
-retwted <- covid19_st[retwt_inds,c("status_id","screen_name","text","retweet_count","followers_count","friends_count")]
+covid_twts <- covid19_st[,c("status_id","screen_name","text","retweet_count","followers_count","friends_count","mentions_user_id","hashtags")]
 # create a time series plot
-twt_txt <- retwted$text # get the tweet text
+twt_txt <- covid_twts$text # get the tweet text
 # start to clean the tweets data
 # let's clean text for tweets before starting to analyze
 twt_txt_no_url <- rm_twitter_url(twt_txt) # first remove the URL 
 head(twt_txt_no_url)
 twt_chrs <- gsub("[^A-Za-z]"," ", twt_txt_no_url) # only keep the upper and lower case characters; replace everything else with a space
 head(twt_chrs)
+
+twts_tidy <- covid_twts %>%
+  mutate(text = twt_chrs) %>%
+  mutate(mentions = lengths(mentions_user_id)) %>%
+  mutate(hashtags = lengths(hashtags))
+
 retwted_df <- data.frame(retwted$status_id,retwted$screen_name,twt_chrs,retwted$retweet_count,retwted$followers_count,retwted$friends_count)
 
 twts_tidy <- as_tibble(retwted_df)
