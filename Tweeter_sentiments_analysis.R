@@ -1,22 +1,6 @@
-# first load all the necessary libraries
-library(rtweet)
-library(httpuv)
-library(dplyr)
-library(reshape)
-library(ggplot2)
-library(readr)
-library(qdapRegex) # for removing URLs from tweet text
-library(tm) # load the text mining package
-library(tidytext)
-library(tidyr)
-library(dplyr)
-library(textdata) # to load various text datasets for sentiment analysis
-library(reshape2)
-library(wordcloud)
-# library(rlang)
-#install.packages("tidyverse")
-# library(qdap) # to extract term frequency
-# search_tweets() # to connect to twitter and authorize browser pop-up
+# first load all the necessary libraries for the processing
+source('Load_libraries.R')
+# search_tweets() # to connect to twitter and authorize browser pop-up on the first try
 # options(max.print = 100)
 
 # get all the trending topics now
@@ -34,14 +18,14 @@ trend_df <- US_trends %>%
 # reorder the tweets by popularity
 trends_df_sort <- arrange(trend_df, desc(tweet_vol))
 # which(trends_df_sort[,1]=="#NFLDraft")
-
+trends_df_sort$trend # to see all 40 trending topics
 # lets perform the timeseries analysis next
 # apply the necessary filter to obtain a manageable file
 # #SaturdayThoughts
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 10000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
 # check oout what information is available in the tweeter data we obtained
-colnames(covid19_st)
+# colnames(covid19_st)
 # determine which tweets have been retweeted at least ones
 retwt_inds <- which(covid19_st$retweet_count>=0)
 # select only tweets which have been retweeted
@@ -68,14 +52,15 @@ twts_tokens <- twts_tidy %>%
 
 # remove the stop words
 twts_clean <- twts_tokens %>%
-  anti_join(get_stopwords())
+  anti_join(get_stopwords()) %>%
+  mutate(golden = followers/friends)
 
 # now lets assign a quantitative score to tweets to determine whether they are positive or negative
 # we will use the afinn lexicon here
 
 twts_afinn <- twts_clean %>%
-  inner_join(get_sentiments("afinn")) %>%
-  mutate(golden = followers/friends)
+  inner_join(get_sentiments("afinn"))
+# mutate(golden = followers/friends)
 # now lets assign the sentiment score to each unique tweet
 
 # twts_sentiment <- twts_afinn %>%
@@ -85,18 +70,36 @@ twts_afinn <- twts_clean %>%
 #   #arrange(desc(score)) %>%
 #   ungroup()
 
-retwts_sentiment <- twts_afinn %>%
-  group_by(id,retweets,followers) %>%
+afinn_sentiment <- twts_afinn %>%
+  group_by(id,retweets,followers,friends) %>%
   summarize(score = sum(value)) %>%
   #mutate(score = sum(value)) %>%
   arrange(desc(score))# %>%
-  #ungroup()
+#ungroup()
+
+# changethe retweets into binary form: 0/1
+afinn_binary <- afinn_sentiment %>%
+  mutate(retwtTF = ifelse(retweets > 0, TRUE, FALSE))
+
+# now we have the data set ready for running the logistic regression on it
+tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6)) # split into training and test subsets
+train <- afinn_binary[tr,]
+test <- afinn_binary[-tr,]
+
+model1 <- glm(retwtTF ~ followers + friends + score, data = train, family = "binomial")
+p <- predict(model1,test, type = "response")
+summary(p)
+cl <- ifelse(p > 0.5, TRUE, FALSE)
+table(cl, test$retwtTF)
+
+confusionMatrix(factor(cl),factor(test$retwtTF))
+
 
 # plot to see if there is any relationship
 retwts_sentiment %>%
   ggplot(aes(score,retweets,size=followers)) +
   geom_point()# +
-  ylim(0,350)
+ylim(0,350)
 
 ### now lets try using "bing" lexicon
 twts_bing <- twts_clean %>%
