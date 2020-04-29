@@ -31,7 +31,7 @@ trends_df_sort$trend # to see all 40 trending topics
 
 # you can pick a different hashtag that is trending now to analyze. However, I was interested in seeing how tweets with #COVID19 hashtags
 # you can read in 18,000 tweets every 15 minutes. So if you want to study more than 18k tweets together, enable "retryonratelimit" option below
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 10000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 18000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
 # check oout what information is available in the tweeter data we obtained
 colnames(covid19_st)
@@ -154,6 +154,21 @@ summary(model1)
 p <- predict(model1,test, type = "response")
 
 summary(p)
+
+# let's use the same variables but fit the decision tree instead of logit regression 
+model1DT <- rpart(retwtTF ~ followers + friends + score + mentions + hashtags, data = train, method = "class")
+rpart.plot(model1DT)
+pDT <- predict(model1DT,test, type = "class")
+
+# let's try random forest
+model1RF <- train(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "ranger",tuneLength = 5)
+pRF <- predict(model1RF,test, type = "class")
+
+# let's plot the ROC curve
+caTools::colAUC(cbind(p,pDT), test$retwtTF,plotROC = T)
+
+# area under the ROC curve can be used to compare various models in order to pick the optimal one
+
 cl <- ifelse(p > 0.5, TRUE, FALSE)
 table(cl, test$retwtTF)
 
@@ -239,16 +254,22 @@ summary(
 # Multivariate_Logit ------------------------------------------------------
 
 # change the retweets into 5 CATegories that define how "viral the tweet" is: "N (none)":0; "S (small)":1-10; "M (medium)":11-100; "L (large)":101-1,000; "V (viral)":>1,000
-afinn_five <- afinn_sentiment %>%
-  mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:1000, "L","V")))))
+# afinn_five <- afinn_sentiment %>%
+#   mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:1000, "L","V")))))
 
+# In order to do the random forest regression we cannot have any empty categories; so delete the Viral category since it is often empty
+afinn_four <- afinn_sentiment %>%
+  mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M", "L"))))
 
 # lets convert the categories for retweets into fanked factors since there is an inherent order to them
 # this order will be used with the multivariate logistic regression
-afinn_fiveRK <- afinn_five %>%
-  mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
+# afinn_fiveRK <- afinn_five %>%
+#   mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
 
-afinn_fiveRK %>%
+afinn_RK <- afinn_four %>%
+  mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L")))
+
+afinn_RK %>%
   ggplot(aes(retwtCAT)) +
   geom_bar() +
   xlab("Retweet category") +
@@ -256,7 +277,7 @@ afinn_fiveRK %>%
 
 # let's display the sentiment distribution for each category
 
-afinn_fiveRK %>%
+afinn_RK %>%
   ggplot(aes(retwtCAT,score)) +
   geom_boxplot() +
   xlab("Retweet category") +
@@ -275,14 +296,67 @@ afinn_fiveRK %>%
 
 #### let's now do the multinomial logistic regression here
 
-model3 <- multinom(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_fiveRK)
+model3 <- multinom(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_RK)
 summary(model3)
+
+z <- summary(model3)$coefficients/summary(model3)$standard.errors
+
+z 
+
+# let's calculate the p-values for Wald's test to estimate the statistical significance for various 
+# 2-tailed z test
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+p
+
+# let's extract the coefficients now
+
+exp(coef(model3))
+
+# these coefficient allow us to estimate the relative risk ratios
+
+
+# Decision trees to determine retweet categories --------------------------
+
+# # in order to run 
+# afinn_fiveRK <- afinn_fiveRK %>%
+#   mutate(isN = ifelse(retwtCAT == "N", T, F)) %>%
+#   mutate(isS = ifelse(retwtCAT == "S", T, F)) %>%
+#   mutate(isM = ifelse(retwtCAT == "M", T, F)) %>%
+#   mutate(isL = ifelse(retwtCAT == "L", T, F)) %>%
+#   mutate(isV = ifelse(retwtCAT == "V", T, F))
+
+# first split the retweet categorical data into train and test subsets
+tr2 <- sample(nrow(afinn_fiveRK),round(nrow(afinn_RK)*0.6)) # split into training and test subsets
+trainRK <- afinn_RK[tr2,]
+testRK <- afinn_RK[-tr2,]
+
+modelRK_DT <- rpart(retwtCAT ~ followers + friends + score + mentions + hashtags, data = trainRK, method = "class")# ,xval = 5)
+
+predRK_DT <- predict(modelRK_DT,testRK, type = "class")
+
+confusionMatrix(predRK_DT, testRK$retwtCAT)
+
+# looks like a simple decision tree performs very poorly here
+
+# let's try with random forest instead
+
+modelRK_RF <- randomForest(retwtCAT ~ followers + friends + score + mentions + hashtags, data = trainRK, method = "class")
+
+predRK_RF <- predict(modelRK_RF,testRK, type = "class")
+
+confusionMatrix(predRK_RF, testRK$retwtCAT)
+
 
 # plot to see if there is any relationship
 retwts_sentiment %>%
   ggplot(aes(score,retweets,size=followers)) +
   geom_point()# +
 ylim(0,350)
+
+
+# Use Bing lexicon for sentiment analysis ---------------------------------
+
+# While "bing" lexicon only specifies whether a word is positive or negative it still can be useful for sentiment analysis
 
 ### now lets try using "bing" lexicon
 twts_bing <- twts_clean %>%
