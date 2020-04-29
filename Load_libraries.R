@@ -16,6 +16,10 @@ library(stats)
 library(caret)
 library(nnet) # for multinomial logistic regression 
 library(MASS) # for ordinal logistic regression 
+library(rpart) # for tree-based analysis
+library(caTools) # to plot th ROC curve
+library(rpart.plot) # for plotting decision trees
+library(randomForest) # for running randomForest regressions
 # library(rlang)
 #install.packages("tidyverse")
 # library(qdap) # to extract term frequency
