@@ -71,7 +71,9 @@ common_words <- twts_clean %>%
 common_words$word
   
 # remove unique stop words that don't add any meaning
-uniq_sw <- data.frame(word = c("s","amp","t", "via", "m", "re", "don", "ve", "q", "gt", "o", "pm"))
+# also notice that we removed "covid" since all the tweets have it because we specifically searched for #COVID19
+# otherwise the wordcloud is overwhelmed by the "covid" word
+uniq_sw <- data.frame(word = c("s","covid","amp","t", "via", "m", "re", "don", "ve", "q", "gt", "o", "pm"))
 # 
 twts_clean <- twts_clean %>% 
    anti_join(uniq_sw, by = "word")
@@ -113,20 +115,6 @@ covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[3])]
 afinn_binary <- afinn_sentiment %>%
   mutate(retwtTF = ifelse(retweets > 0, TRUE, FALSE))
 
-# change the retweets into 5 CATegories that define how "viral the tweet" is: "N (none)":0; "S (small)":1-10; "M (medium)":11-100; "L (large)":101-1,000; "V (viral)":>1,000
-afinn_five <- afinn_sentiment %>%
-  mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:1000, "L","V")))))
-
-# lets convert the categories for retweets into fanked factors since there is an inherent order to them
-afinn_fiveRK <- afinn_five %>%
-  mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
-
-afinn_fiveRK %>%
-  ggplot(aes(retwtCAT)) +
-  geom_bar() +
-  xlab("Retweet category") +
-  ggtitle("Distribution of the #COVID19 tweets into retweet categories")
-
 # now we have the data set ready for running the logistic regression on it
 tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6)) # split into training and test subsets
 train <- afinn_binary[tr,]
@@ -141,6 +129,35 @@ table(cl, test$retwtTF)
 
 confusionMatrix(factor(cl),factor(test$retwtTF))
 
+#### let's now do the multinomial logistic regression here
+# change the retweets into 5 CATegories that define how "viral the tweet" is: "N (none)":0; "S (small)":1-10; "M (medium)":11-100; "L (large)":101-1,000; "V (viral)":>1,000
+afinn_five <- afinn_sentiment %>%
+  mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:1000, "L","V")))))
+
+
+# lets convert the categories for retweets into fanked factors since there is an inherent order to them
+# this order will be used with the multivariate logistic regression
+afinn_fiveRK <- afinn_five %>%
+  mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
+
+afinn_fiveRK %>%
+  ggplot(aes(retwtCAT)) +
+  geom_bar() +
+  xlab("Retweet category") +
+  ggtitle("Distribution of the #COVID19 tweets into retweet categories")
+
+# # first let's set the baseline outcome
+# afinn_fiveRK %>% 
+#   mutate(retwtCAT2 = relevel(retwtCAT, ref = "N"))
+## because there is an inherent order in the retweeting category: V > L > M > S > N
+# we will use ordinal Logistic regression model to fit the data
+# specifically we will use "polr()" function from MASS package which 
+# runs proportional odds logistic regression
+# model2 <- polr(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_fiveRK)
+# summary(model2)
+
+model3 <- multinom(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_fiveRK)
+summary(model3)
 
 # plot to see if there is any relationship
 retwts_sentiment %>%

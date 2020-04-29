@@ -14,6 +14,8 @@ library(reshape2)
 library(wordcloud)
 library(stats)
 library(caret)
+library(nnet) # for multinomial logistic regression 
+library(MASS) # for ordinal logistic regression 
 # library(rlang)
 #install.packages("tidyverse")
 # library(qdap) # to extract term frequency
