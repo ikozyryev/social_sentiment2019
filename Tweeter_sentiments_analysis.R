@@ -1,15 +1,21 @@
+# This program analyzes tweets with #COVID19 hashtags to see what parameters of the tweet effect the number of retweets.
+# Specifically, I considered the following tweet variables: i). followers_count ii). friends_count iii). number of hashtags 
+# iv). number of user mentions v). sentiment of the text (how positive or negative the wording of the tweeter was).
+# My initial hypothesis was that the more negative the tweet was the more retweets it will get. Let's see below if that applies to 
+# tweets related to covid19...
+
 # first load all the necessary libraries for the processing
 source('Load_libraries.R')
 # search_tweets() # to connect to twitter and authorize browser pop-up on the first try
 # options(max.print = 100)
 
+# Let's see which topics are trending now ---------------------------------
+
 # get all the trending topics now
 US_trends <- get_trends("United States")
 head(US_trends)
-# get
-# tweet_volume
+
 # trends_available() # extract geographic locations where trends are available
-# head(US_trends$trend)
 
 trend_df <- US_trends %>% 
   group_by(trend) %>%
@@ -19,19 +25,23 @@ trend_df <- US_trends %>%
 trends_df_sort <- arrange(trend_df, desc(tweet_vol))
 # which(trends_df_sort[,1]=="#NFLDraft")
 trends_df_sort$trend # to see all 40 trending topics
-# lets perform the timeseries analysis next
-# apply the necessary filter to obtain a manageable file
-# #SaturdayThoughts
+
+
+# Read in tweets and process the text -------------------------------------
+
+# you can pick a different hashtag that is trending now to analyze. However, I was interested in seeing how tweets with #COVID19 hashtags
+# you can read in 18,000 tweets every 15 minutes. So if you want to study more than 18k tweets together, enable "retryonratelimit" option below
 covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 10000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
 # check oout what information is available in the tweeter data we obtained
 colnames(covid19_st)
 # determine which tweets have been retweeted at least ones if you need to study just those
 retwt_inds <- which(covid19_st$retweet_count>0)
-# select only tweets which have been retweeted
-# keep the status_id in order to account for the case if one use tweeted multiple times as a unique identifier 
+# by adding retwt_inds to the rows below you can select only tweets that have been retweeted before 
+# at different stages of the project I was interested in analizing only tweets which have been retweeted
+# keep the status_id in order to account for the case if one user tweeted multiple times as a unique identifier 
 covid_twts <- covid19_st[,c("status_id","screen_name","text","retweet_count","followers_count","friends_count","mentions_user_id","hashtags")]
-# create a time series plot
+
 twt_txt <- covid_twts$text # get the tweet text
 # start to clean the tweets data
 # let's clean text for tweets before starting to analyze
@@ -78,12 +88,20 @@ uniq_sw <- data.frame(word = c("s","covid","amp","t", "via", "m", "re", "don", "
 twts_clean <- twts_clean %>% 
    anti_join(uniq_sw, by = "word")
 
+
+# Let's visualize the most common words -----------------------------------
+
+
 # let's see which words are the most popular in tweets
 pal <- brewer.pal(8,"Dark2")
 
 twts_clean %>%
   count(word) %>%
   with(wordcloud(word,n,random.order = FALSE, max.words = 100, colors = pal))
+
+
+# Perform tweet sentiment analysis with afinn lexicon ---------------------
+
 
 # now lets assign a quantitative score to tweets to determine whether they are positive or negative
 # we will use the afinn lexicon here
@@ -92,13 +110,6 @@ twts_afinn <- twts_clean %>%
   inner_join(get_sentiments("afinn"))
 
 # now lets assign the sentiment score to each unique tweet
-
-# twts_sentiment <- twts_afinn %>%
-#   group_by(id) %>%
-#   #summarize(score = sum(value)) %>%
-#   mutate(score = sum(value))
-#   #arrange(desc(score)) %>%
-#   ungroup()
 
 afinn_sentiment <- twts_afinn %>%
   group_by(id,retweets,followers,friends,hashtags,mentions) %>%
@@ -111,9 +122,26 @@ covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[2])]
 covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[3])]
 # those are indeed very positive tweets 
 
-# change the retweets into binary form: 0/1
+
+# Apply logistic regression  --------
+# to see what factors determine whether the tweet is retweeted at all
+
+# change the retweets into binary form: 0(no retweets)/1(at least 1 retweet)
 afinn_binary <- afinn_sentiment %>%
   mutate(retwtTF = ifelse(retweets > 0, TRUE, FALSE))
+
+afinn_binary %>%
+  ggplot(aes(retwtTF)) +
+  geom_bar() +
+  xlab("Retweet category") +
+  ggtitle("Distribution of the #COVID19 tweets into retweet categories")
+
+# let's see what fraction of the tweets have at least one retweet
+afinn_binary %>%
+  group_by(retwtTF) %>%
+  summarize(n = n())
+
+# for this given run, looks like 39% of 10,000 tweets I am analyzing have been retweeted
 
 # now we have the data set ready for running the logistic regression on it
 tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6)) # split into training and test subsets
@@ -122,14 +150,94 @@ test <- afinn_binary[-tr,]
 
 model1 <- glm(retwtTF ~ followers + friends + score + mentions + hashtags, data = train, family = "binomial")
 summary(model1)
+
 p <- predict(model1,test, type = "response")
+
 summary(p)
 cl <- ifelse(p > 0.5, TRUE, FALSE)
 table(cl, test$retwtTF)
 
 confusionMatrix(factor(cl),factor(test$retwtTF))
 
-#### let's now do the multinomial logistic regression here
+# from the summary table of model1 we can see that only follower, mentions and hashtags are statistically significant in determining 
+# whether the tweet will be retweeted at least once or not
+# let's run the second model now only with those parameters
+model2 <- glm(retwtTF ~ followers + mentions + hashtags, data = train, family = "binomial")
+summary(model2)
+p <- predict(model2,test, type = "response")
+summary(p)
+cl <- ifelse(p > 0.5, TRUE, FALSE)
+table(cl, test$retwtTF)
+
+# one of the advantages of the ligistic regression is that it's coefficient lend to interpretation 
+exp(coef(model2)) # we can see that mentions of other users have the largest effect on log-odds. This is something that
+# the author of the tweet can control thus potentially increasing the odd of the tweet being retweeted
+
+# remember that we are looking at the coefficients for log-odds here
+
+# Cross-validation --------------------------------------------------------
+# use cross-validation from the caret library
+train <- train %>%
+  mutate(retwtBi = factor(retwtTF))
+
+test <- test %>%
+  mutate(retwtBi = factor(retwtTF))
+
+set.seed(40)
+
+cv_model1 <- train(
+  retwtBi ~ followers,
+  data = train,
+  method = "glm",
+  family = "binomial",
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+cv_model2 <- train(
+  retwtBi ~ mentions,
+  data = train,
+  method = "glm",
+  family = "binomial",
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+cv_model3 <- train(
+  retwtBi ~ hashtags,
+  data = train,
+  method = "glm",
+  family = "binomial",
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+cv_model4 <- train(
+  retwtBi ~ followers + mentions + hashtags,
+  data = train,
+  method = "glm",
+  family = "binomial",
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+# let's comapre the performance of different models now
+
+summary(
+  resamples(
+    list(
+      cv1 = cv_model1,
+      cv2 = cv_model2,
+      cv3 = cv_model3,
+      cv4 = cv_model4
+    )
+  )
+)$statistics$Accuracy
+
+# notice that the accuracy is about the same for all the tested models indicating that adding additional variables that we have does not lead to better predicting power 
+# We can try adding more information about the tweet to begin with (remember there are 90 different variables associated with a single tweet we can get)
+# however, personally I am interested in seeing which tweets influence many people: i.e. what causes tweet to become "viral" and be retweeted
+# thousands of times and potentially have a significant influence on the perception of many people about COVID19. Thus, let's actually divide
+# tweets which have been retweet into multiple sub-categories. 
+
+# Multivariate_Logit ------------------------------------------------------
+
 # change the retweets into 5 CATegories that define how "viral the tweet" is: "N (none)":0; "S (small)":1-10; "M (medium)":11-100; "L (large)":101-1,000; "V (viral)":>1,000
 afinn_five <- afinn_sentiment %>%
   mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:1000, "L","V")))))
@@ -146,6 +254,15 @@ afinn_fiveRK %>%
   xlab("Retweet category") +
   ggtitle("Distribution of the #COVID19 tweets into retweet categories")
 
+# let's display the sentiment distribution for each category
+
+afinn_fiveRK %>%
+  ggplot(aes(retwtCAT,score)) +
+  geom_boxplot() +
+  xlab("Retweet category") +
+  ylab("Sentiment score") +
+  ggtitle("Sentiment distribution of #COVID19 tweets for each retweet category")
+
 # # first let's set the baseline outcome
 # afinn_fiveRK %>% 
 #   mutate(retwtCAT2 = relevel(retwtCAT, ref = "N"))
@@ -155,6 +272,8 @@ afinn_fiveRK %>%
 # runs proportional odds logistic regression
 # model2 <- polr(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_fiveRK)
 # summary(model2)
+
+#### let's now do the multinomial logistic regression here
 
 model3 <- multinom(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_fiveRK)
 summary(model3)
