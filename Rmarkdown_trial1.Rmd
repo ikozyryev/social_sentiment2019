@@ -1,0 +1,101 @@
+---
+title: 'Tweeter sentiment analysis during COVID-19 Pandemic'
+author: "Ivan Kozyryev"
+date: "4/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview
+
+The goal of my project was to determine whether the overall sentiment of the tweets with COVID19-related hashtags influenced whether the tweet would be retweeted and how many times. My initial hypothesis was that the more negative the tweet is the more retweets it will get because it has potential to stir emotions in many people. During the course of this project as I started to learn more about tweeter, I became more broadly interested in what parameters of the tweet effect the number of retweets. Specifically, I considered the following tweet variables:
+
+1. number of followers
+2. number of friends 
+3. number of hashtags 
+4. number of user mentions 
+5. sentiment of the text
+
+While there 90 different variable associated with each tweet and many possibilities for further manipulation of the features, I chose to focus on the five above for two reasons:
+
+* Based on my intuition about social media it seemed likely that those parameters might matter.
+* I wanted to have a simpler model that can have interpretable implications about how one can spread positive sentiments and correct information on social media to a wide audience. Or alternatively, understand how *misinformation* related to the disease is effectively spread on social media. 
+
+# Exploratory initial analysis
+
+First let's load all the libraries needed for the analysis of Twitter data. I used [rtweet](https://rtweet.info/) library to interface with the tweeter API. 
+
+```{r message=FALSE}
+source('Load_libraries.R')
+```
+
+As a first step, let's quickly check what topics are trending on Twitter now. I first get the current trends in the US, then sort all the topics by the tweet volume and look at the top 10 trending topics. 
+
+```{r}
+US_trends <- get_trends("United States")
+
+US_trends_sorted <- US_trends %>%
+  group_by(trend) %>%
+  summarize(tweet_vol = mean(tweet_volume)) %>%
+  arrange(desc(tweet_vol))
+
+US_trends_sorted$trend[1:10]
+```
+
+As we can see from the list, #COVID__19 is among the top 10 trending topics right now on Twitter which indicates its importance in the social discussion.
+
+# Obtaining the data for tweets
+
+Let's read *original* tweets and see what associated data is available for them. Thus, I have excluded all replies, retweets and quotes. I also only focused on the tweets in English since I am interested in analyzing the sentiment of their text. 
+
+```{r}
+covid19_st <- search_tweets("#COVID__19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") 
+colnames(covid19_st)
+```
+As we can see, there is a lot of parameters associated with each tweet but for now I am interested in only a few of those.
+```{r}
+covid_twts <- covid19_st[,c("status_id","screen_name","text","retweet_count","followers_count","friends_count","mentions_user_id","hashtags")]
+```
+## Pre-processing the text for tweets
+In order to perform analysis of the text, I first need to clean up the body of the tweet:
+* Separate the text from other tweet parameters
+* Remove URLs
+* Only keep the upper and lower case characters
+```{r}
+twt_txt <- covid_twts$text # get the tweet text
+head(twt_txt)
+twt_txt_no_url <- rm_twitter_url(twt_txt)
+# head(twt_txt_no_url)
+twt_chrs <- gsub("[^A-Za-z]"," ", twt_txt_no_url)
+head(twt_chrs)
+```
+As we can see by comparing the same tweets in the "raw" form and after formatting, we are left only with letters that can be further processed and analyzed. 
+## Pre-processing other tweeter data
+The data we read in provides the lists of the hashtags and users mentioned in each tweet, however, I was interested in looking into how the number of hashtags and mentions effects the degree of retweeting which required some initial processing. 
+
+First, lets count the number of mentions and hashtags
+```{r}
+twts_tidy <- covid_twts %>%
+  mutate(text = twt_chrs) %>%
+  mutate(mentions = lengths(mentions_user_id)) %>%
+  mutate(hashtags = lengths(hashtags))
+```
+It is important to notice that most of the tweets don't have any mentions with "NA" in place so we need to properly account for that. I first found which tweets don't have any associated mentions of users and then properly corrected the "mentions" count for those entries. 
+```{r}
+twts_NAinds <- which(is.na(covid_twts$mentions_user_id)) # find which mentions are non-existent
+twts_tidy$mentions[twts_inds1] <- 0 # correct the number of mentions entries for those indeces
+```
+# also note that each tweet has at least one hashtag since we specifically searched for #COVID19 tweets to begin with!
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
