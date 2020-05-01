@@ -27,7 +27,7 @@ US_trends_sorted$trend[1:10]
 
 # you can pick a different hashtag that is trending now to analyze. However, I was interested in seeing how tweets with #COVID19 hashtags
 # you can read in 18,000 tweets every 15 minutes. So if you want to study more than 18k tweets together, enable "retryonratelimit" option below
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 18000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
 # check out what information is available in the tweeter data we obtained
 colnames(covid19_st)
@@ -62,12 +62,12 @@ twts_tidy <- twts_tidy %>%
 colnames(twts_tidy)
 # remove the columns that we no longer need
 twts_tidy <- twts_tidy %>% 
-  select(-c(screen_name,mentions_user_id))
+  dplyr::select(-c(screen_name,mentions_user_id))
 
 # unnest tokens and remove stop words
 twts_clean <- twts_tidy %>%
   unnest_tokens(word,text) %>%
-  anti_join(get_stopwords())
+  anti_join(get_stopwords(),by = "word")
 
 # let's look at the most common words used
 common_words <- twts_clean %>%
@@ -104,7 +104,7 @@ twts_clean %>%
 # we will use the afinn lexicon here
 
 twts_afinn <- twts_clean %>%
-  inner_join(get_sentiments("afinn"))
+  inner_join(get_sentiments("afinn"),by = "word")
 
 # now lets assign the sentiment score to each unique tweet
 
@@ -145,46 +145,47 @@ afinn_binary %>%
 
 # now we have the data set ready for running the logistic regression on it
 tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6)) # split into training and test subsets
-train <- afinn_binary[tr,]
-test <- afinn_binary[-tr,]
+trainSet <- afinn_binary[tr,]
+testSet <- afinn_binary[-tr,]
 
-model1LR <- glm(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, family = "binomial")
-summary(model1)
+model1LR <- glm(retwtBi ~ followers + friends + score + mentions + hashtags, data = trainSet, family = "binomial")
+summary(model1LR)
 
-p <- predict(model1,test, type = "response")
+pred1LR <- predict(model1LR,testSet, type = "response")
 
 # summary(p)
 
 # let's use the same variables but fit the decision tree instead of logit regression 
-model1DT <- rpart(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "class")
+model1DT <- rpart(retwtBi ~ followers + friends + score + mentions + hashtags, data = trainSet, method = "class")
 rpart.plot(model1DT)
-pDT <- predict(model1DT,test, type = "class")
+pred1DT <- predict(model1DT,testSet, type = "class")
 
 # let's try random forest
 
 
-model1RF <- train(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "ranger",tuneLength = 5)
-pRF <- predict(model1RF,test, type = "prob")
+# model1RF <- train(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "ranger",tuneLength = 5)
+model1RF <- randomForest(retwtBi ~ followers + friends + score + mentions + hashtags, data = trainSet, importance = TRUE)
+pred1RF <- predict(model1RF,testSet, type = "class")
 
 # let's plot the ROC curve
-caTools::colAUC(cbind(p,pDT,pRF), test$retwtBi,plotROC = T)
+caTools::colAUC(cbind(pred1LR,pred1RF), test$retwtBi,plotROC = T)
 
 # area under the ROC curve can be used to compare various models in order to pick the optimal one
 
-cl <- ifelse(p > 0.5, "A", "N")
+cl1LR <- ifelse(pred1LR > 0.5, "A", "N")
 # table(cl, test$retwtBi)
-
-confusionMatrix(factor(cl, levels = c("N","A")),test$retwtBi)
+# we set the positive class to "A" as we are interested in predicting whether the tweet with receive any retweets
+confusionMatrix(factor(cl1LR, levels = c("N","A")),test$retwtBi, positive = "A")
 
 # from the summary table of model1 we can see that only follower, mentions and hashtags are statistically significant in determining 
 # whether the tweet will be retweeted at least once or not
 # let's run the second model now only with those parameters
-model2 <- glm(retwtTF ~ followers + mentions + hashtags, data = train, family = "binomial")
-summary(model2)
-p <- predict(model2,test, type = "response")
-summary(p)
-cl <- ifelse(p > 0.5, TRUE, FALSE)
-table(cl, test$retwtTF)
+model2LR <- glm(retwtBi ~ followers + mentions + hashtags, data = trainSet, family = "binomial")
+summary(model2LR)
+pred2LR <- predict(model2LR,testSet, type = "response")
+summary(pred2LR)
+cl2LR <- ifelse(pred2LR > 0.5, "A", "N")
+table(factor(cl2LR, levels = c("N","A")), test$retwtBi)
 
 # one of the advantages of the ligistic regression is that it's coefficient lend to interpretation 
 exp(coef(model2)) # we can see that mentions of other users have the largest effect on log-odds. This is something that
