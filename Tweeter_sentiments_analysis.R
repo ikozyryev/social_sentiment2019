@@ -15,25 +15,21 @@ source('Load_libraries.R')
 US_trends <- get_trends("United States")
 head(US_trends)
 
-# trends_available() # extract geographic locations where trends are available
-
-trend_df <- US_trends %>% 
+US_trends_sorted <- US_trends %>%
   group_by(trend) %>%
-  summarize(tweet_vol = mean(tweet_volume))
+  summarize(tweet_vol = mean(tweet_volume)) %>%
+  arrange(desc(tweet_vol))
 
-# reorder the tweets by popularity
-trends_df_sort <- arrange(trend_df, desc(tweet_vol))
-# which(trends_df_sort[,1]=="#NFLDraft")
-trends_df_sort$trend # to see all 40 trending topics
-
+# let's look at the top 10 trending topics now
+US_trends_sorted$trend[1:10]
 
 # Read in tweets and process the text -------------------------------------
 
 # you can pick a different hashtag that is trending now to analyze. However, I was interested in seeing how tweets with #COVID19 hashtags
 # you can read in 18,000 tweets every 15 minutes. So if you want to study more than 18k tweets together, enable "retryonratelimit" option below
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 18000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") # retryonratelimit = TRUE
 head(covid19_st)
-# check oout what information is available in the tweeter data we obtained
+# check out what information is available in the tweeter data we obtained
 colnames(covid19_st)
 # determine which tweets have been retweeted at least ones if you need to study just those
 retwt_inds <- which(covid19_st$retweet_count>0)
@@ -76,7 +72,8 @@ twts_clean <- twts_tidy %>%
 # let's look at the most common words used
 common_words <- twts_clean %>%
   count(word) %>%
-  arrange(desc(n))
+  arrange(desc(n)) %>%
+  top_n(n=25, wt = n)
 
 common_words$word
   
@@ -126,19 +123,22 @@ covid_twts$text[which(twts_tidy$id == afinn_sentiment$id[3])]
 # Apply logistic regression  --------
 # to see what factors determine whether the tweet is retweeted at all
 
-# change the retweets into binary form: 0(no retweets)/1(at least 1 retweet)
+# change the retweets into binary form: "N"(no retweets)/"A"(any retweets)
 afinn_binary <- afinn_sentiment %>%
-  mutate(retwtTF = ifelse(retweets > 0, TRUE, FALSE))
+  mutate(retwtBi = ifelse(retweets > 0, "A", "N"))
+# convert the retweet indicator into a ranked factor: N < A
+afinn_binary <- afinn_binary %>%
+  mutate(retwtBi = factor(retwtBi, levels = c("N", "A")))
 
 afinn_binary %>%
-  ggplot(aes(retwtTF)) +
+  ggplot(aes(retwtBi)) +
   geom_bar() +
   xlab("Retweet category") +
   ggtitle("Distribution of the #COVID19 tweets into retweet categories")
 
 # let's see what fraction of the tweets have at least one retweet
 afinn_binary %>%
-  group_by(retwtTF) %>%
+  group_by(retwtBi) %>%
   summarize(n = n())
 
 # for this given run, looks like 39% of 10,000 tweets I am analyzing have been retweeted
@@ -148,31 +148,33 @@ tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6)) # split into trai
 train <- afinn_binary[tr,]
 test <- afinn_binary[-tr,]
 
-model1 <- glm(retwtTF ~ followers + friends + score + mentions + hashtags, data = train, family = "binomial")
+model1LR <- glm(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, family = "binomial")
 summary(model1)
 
 p <- predict(model1,test, type = "response")
 
-summary(p)
+# summary(p)
 
 # let's use the same variables but fit the decision tree instead of logit regression 
-model1DT <- rpart(retwtTF ~ followers + friends + score + mentions + hashtags, data = train, method = "class")
+model1DT <- rpart(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "class")
 rpart.plot(model1DT)
 pDT <- predict(model1DT,test, type = "class")
 
 # let's try random forest
+
+
 model1RF <- train(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "ranger",tuneLength = 5)
-pRF <- predict(model1RF,test, type = "class")
+pRF <- predict(model1RF,test, type = "prob")
 
 # let's plot the ROC curve
-caTools::colAUC(cbind(p,pDT), test$retwtTF,plotROC = T)
+caTools::colAUC(cbind(p,pDT,pRF), test$retwtBi,plotROC = T)
 
 # area under the ROC curve can be used to compare various models in order to pick the optimal one
 
-cl <- ifelse(p > 0.5, TRUE, FALSE)
-table(cl, test$retwtTF)
+cl <- ifelse(p > 0.5, "A", "N")
+# table(cl, test$retwtBi)
 
-confusionMatrix(factor(cl),factor(test$retwtTF))
+confusionMatrix(factor(cl, levels = c("N","A")),test$retwtBi)
 
 # from the summary table of model1 we can see that only follower, mentions and hashtags are statistically significant in determining 
 # whether the tweet will be retweeted at least once or not
