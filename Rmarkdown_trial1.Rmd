@@ -52,7 +52,7 @@ As we can see from the list, #COVID__19 is among the top 10 trending topics righ
 Let's read *original* tweets and see what associated data is available for them. Thus, I have excluded all replies, retweets and quotes. I also only focused on the tweets in English since I am interested in analyzing the sentiment of their text. 
 
 ```{r}
-covid19_st <- search_tweets("#COVID__19 -filter:retweets -filter:quote -filter:replies",n = 1000, include_rts = FALSE, lang = "en") 
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 18000, include_rts = FALSE, lang = "en") 
 colnames(covid19_st)[1:25]
 ```
 As we can see, there is a lot of parameters associated with each tweet but for now I am interested in only a few of those. There are 90 different parameters but I only displayed 25 for example above. Number of display columns can be modified to see all the available data types for each tweet.
@@ -213,7 +213,8 @@ which is equivalent to the expression for $\sigma(t)$ above. Therefore, the odds
 
 $$ \frac{p}{1-p} = \text{exp}(\beta_0+\beta_1x_1+\beta_2x_2+\cdots\beta_kx_k)$$
 
-but more importantantly $logit(p)$ is $$ \text{log} \left(\frac{p}{1-p}\right)=\beta_0+\beta_1x_1+\beta_2x_2+\cdots\beta_kx_k $$   
+but more importantantly $logit(p)$ is $$ \text{log} \left(\frac{p}{1-p}\right)=\beta_0+\beta_1x_1+\beta_2x_2+\cdots\beta_kx_k $$         
+
 is linear in the fitting coefficients $\beta_k$. 
  
 ### Implementing logistic regression
@@ -221,36 +222,37 @@ is linear in the fitting coefficients $\beta_k$.
 Before we can we train the logistic regression model, we need to split the dataset into train and test subsets; here I used the 60/40 split ratio.
 ```{r}
 tr <- sample(nrow(afinn_binary),round(nrow(afinn_binary)*0.6))
-train <- afinn_binary[tr,]
-test <- afinn_binary[-tr,]
+trainSet <- afinn_binary[tr,]
+testSet <- afinn_binary[-tr,]
 ```
 
 First, we fit the logit model to the training set to see which parameters are statistically significant:
-```{r}
+```{r warning = FALSE}
 model1LR <- glm(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, family = "binomial")
 summary(model1LR)
 ```
 
 In order to determine how accurate the fitted model is we now apply it to the "test" dataset and compare to the actual values:
 ```{r}
-pred1LR <- predict(model1LR,test, type = "response")
-
-cl1LR <- ifelse(pred1LR > 0.5, "A", "N")
+prob1LR <- predict(model1LR,test, type = "response")
+# prob1LR
+cl1LR <- ifelse(prob1LR > 0.5, "A", "N")
 ```
-Confusion matrix will provide a lot of valuable information on the model peformance:
+Confusion matrix will provide a lot of valuable information on the model peformance. I set the positive class to "A" as we are interested in predicting whether the tweet with receive any retweets
 ```{r}
-confusionMatrix(factor(cl1LR, levels = c("N","A")),test$retwtBi)
+confusionMatrix(factor(cl1LR, levels = c("N","A")),test$retwtBi, positive = "A")
 ```
 From the summary table of logistic regression model (model1LR) we can see that only followers, mentions and hashtags are statistically significant in determining whether the tweet will be retweeted at least once or not. Let's run the second model now only with those parameters
-```{r}
+```{r warning = FALSE}
 model2LR <- glm(retwtBi ~ followers + mentions + hashtags, data = train, family = "binomial")
 summary(model2LR)
 ```
 We can see now that all of the variables are statistically significant as expected. 
 ```{r}
-pred2LR <- predict(model2LR,test, type = "response")
-cl2LR <- ifelse(pred2LR > 0.5, "A", "N")
-confusionMatrix(factor(cl2LR, levels = c("N","A")),test$retwtBi)
+prob2LR <- predict(model2LR,testSet, type = "response") # predicted probability
+# pred2LR
+cl2LR <- ifelse(prob2LR > 0.5, "A", "N") # predicted binary classification
+confusionMatrix(factor(cl2LR, levels = c("N","A")),testSet$retwtBi, positive = "A")
 ```
 We can see that accuracy has in fact slightly improved. 
 
@@ -264,64 +266,48 @@ We can see that mentions of other users have the largest effect on log-odds. Thi
 
 The logit function assumed a linear relationship between the log(odd) and fitting coefficients. Thus it could be instructive to look at some nonlinear models. Let's use the same variables but fit the decision tree instead of logit regression 
 ```{r}
-model1DT <- rpart(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "class")
+model1DT <- rpart(retwtBi ~ followers + friends + score + mentions + hashtags, data = trainSet, method = "class")
 rpart.plot(model1DT)
 ```
 
 ```{r}
-pred1DT <- predict(model1DT,test, type = "class")
-cl1DT <- ifelse(pred1TD > 0.5, "A", "N")
-confusionMatrix(factor(cl1DT, levels = c("N","A")),test$retwtBi)
+cl1DT <- predict(model1DT,testSet, type = "class")
+confusionMatrix(cl1DT,testSet$retwtBi, positive = "A")
 ```
 
-# let's use the same variables but fit the decision tree instead of logit regression 
-model1DT <- rpart(retwtTF ~ followers + friends + score + mentions + hashtags, data = train, method = "class")
-rpart.plot(model1DT)
-pDT <- predict(model1DT,test, type = "class")
+As we can see from the confusion matrix, a single decision tree performs significantly better than the logistic regression on such important parameters as accuracy, specificity (precision) and sensitivity (recall). Therefore, there is a lot for potential for random forest approach to improve the predicting power of our model. 
 
-# let's try random forest
-model1RF <- train(retwtBi ~ followers + friends + score + mentions + hashtags, data = train, method = "ranger",tuneLength = 5)
-pRF <- predict(model1RF,test, type = "class")
+Let's fit the random forest model to the full data:
+
+```{r}
+model1RF <- randomForest(retwtBi ~ followers + friends + score + mentions + hashtags, data = trainSet, importance = TRUE)
+```
+We can now calculate predicted probabilities and classes:
+```{r}
+prob1RFboth <- predict(model1RF,testSet, type = "prob") # predicted probabilities 
+prob1RF = prob1RFboth[,"A"]
+# prob1RF
+cl1RF <- predict(model1RF,testSet, type = "class") # predicted binary classification
+# cl1RF
+confusionMatrix(cl1RF,testSet$retwtBi, positive = "A")
+```
+In order to compare how different fitted model perform I will look at the ROC curves:
 
 # let's plot the ROC curve
-caTools::colAUC(cbind(p,pDT), test$retwtTF,plotROC = T)
+```{r warning = FALSE}
+caTools::colAUC(cbind(prob1LR,prob2LR,prob1RF), testSet$retwtBi,plotROC = T)
+```
 
-# area under the ROC curve can be used to compare various models in order to pick the optimal one
+Area under the ROC curve can be used to compare various models in order to pick the optimal one and we conclude that random forest model performs the best on this metric as well. 
 
-cl <- ifelse(p > 0.5, TRUE, FALSE)
-table(cl, test$retwtTF)
+From the ROC curve we can see that Logistic Regression model 2 (LR2) (fitted only on followers, mentions and hashtags) performs much better compared to LR1 model (fitted on all data). We can use cross-validation to try fitting different logistic regression models and seeing which one performs the best:  
 
-confusionMatrix(factor(cl),factor(test$retwtTF))
-
-# from the summary table of model1 we can see that only follower, mentions and hashtags are statistically significant in determining 
-# whether the tweet will be retweeted at least once or not
-# let's run the second model now only with those parameters
-model2 <- glm(retwtTF ~ followers + mentions + hashtags, data = train, family = "binomial")
-summary(model2)
-p <- predict(model2,test, type = "response")
-summary(p)
-cl <- ifelse(p > 0.5, TRUE, FALSE)
-table(cl, test$retwtTF)
-
-# one of the advantages of the ligistic regression is that it's coefficient lend to interpretation 
-exp(coef(model2)) # we can see that mentions of other users have the largest effect on log-odds. This is something that
-# the author of the tweet can control thus potentially increasing the odd of the tweet being retweeted
-
-# remember that we are looking at the coefficients for log-odds here
-
-# Cross-validation --------------------------------------------------------
+```{r warning = FALSE}
+set.seed(42)
 # use cross-validation from the caret library
-train <- train %>%
-  mutate(retwtBi = factor(retwtTF))
-
-test <- test %>%
-  mutate(retwtBi = factor(retwtTF))
-
-set.seed(40)
-
 cv_model1 <- train(
   retwtBi ~ followers,
-  data = train,
+  data = trainSet,
   method = "glm",
   family = "binomial",
   trControl = trainControl(method = "cv", number = 10)
@@ -329,7 +315,7 @@ cv_model1 <- train(
 
 cv_model2 <- train(
   retwtBi ~ mentions,
-  data = train,
+  data = trainSet,
   method = "glm",
   family = "binomial",
   trControl = trainControl(method = "cv", number = 10)
@@ -337,7 +323,7 @@ cv_model2 <- train(
 
 cv_model3 <- train(
   retwtBi ~ hashtags,
-  data = train,
+  data = trainSet,
   method = "glm",
   family = "binomial",
   trControl = trainControl(method = "cv", number = 10)
@@ -345,14 +331,15 @@ cv_model3 <- train(
 
 cv_model4 <- train(
   retwtBi ~ followers + mentions + hashtags,
-  data = train,
+  data = trainSet,
   method = "glm",
   family = "binomial",
   trControl = trainControl(method = "cv", number = 10)
 )
+```
 
-# let's comapre the performance of different models now
-
+Let's comapre the accuracy performance of different models now:
+```{r}
 summary(
   resamples(
     list(
@@ -363,17 +350,143 @@ summary(
     )
   )
 )$statistics$Accuracy
+```
 
-# notice that the accuracy is about the same for all the tested models indicating that adding additional variables that we have does not lead to better predicting power 
-# We can try adding more information about the tweet to begin with (remember there are 90 different variables associated with a single tweet we can get)
-# however, personally I am interested in seeing which tweets influence many people: i.e. what causes tweet to become "viral" and be retweeted
-# thousands of times and potentially have a significant influence on the perception of many people about COVID19. Thus, let's actually divide
-# tweets which have been retweet into multiple sub-categories. 
+We can see that the model with all three statistically significant parameters from fitting model LR2 has the best accuracy. However, using only the number of followers in the logistic regression model provides a decent accuracy as well, which indicates that this is the most important parameter for predicting whether the tweet is retweeted or not. 
+
+## Summary of the Binary Retweet Analysis
+We have used Logistic Regression to identify the most important tweet variables in determining whether it is retweeted or not. Such factors as number of followers, mentions of other users and number of hashtags turned out to be statiscatilly important. We further observed that number of **followers** is the most important mentric in predicting the propensity of the tweet to be retweeted. 
+
+We can try adding more information about the tweet to begin with (remember there are 90 different variables associated with a single tweet we can get) however, personally I am interested in seeing which tweets influence many people: i.e. what causes tweet to become "viral" and be retweeted hundreds or thousands of times and potentially have a significant influence on the perception of many people about COVID19. Thus, let's actually divide tweets which have been retweet into multiple sub-categories. 
 
 
+# Multivariate Logit 
 
+First I changed the retweets into 5 CATegories that define how "popular" the tweet is: 
+
+* "N (none)":0 
+* "S (small)":1-10 
+* "M (medium)":11-100 
+* "L (large)":101-500 
+* "V (viral)":>500
+
+While other possible divisions exist, I wanted to make sure that there are enough samples in each category. 
+```{r}
+ afinn_five <- afinn_sentiment %>%
+   mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M",ifelse(retweets %in% 101:500, "L","V")))))
+
+# In order to do the random forest regression we cannot have any empty categories; so delete the Viral category since it is often empty
+#afinn_four <- afinn_sentiment %>%
+#  mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M", "L"))))
+```
+
+Lets convert the categories for retweets into fanked factors since there is an inherent order to them this order will be used with the multivariate logistic regression or can be used for ordinal logistic regression. 
+```{r}
+afinn_RK <- afinn_five %>%
+   mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
+# In case "L" category is empty use only 4 buckets
+#afinn_RK <- afinn_four %>%
+#  mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L")))
+```
+Let's see how many tweets per category there are in our sample:
+```{r}
+afinn_RK %>%
+  ggplot(aes(retwtCAT)) +
+  geom_bar() +
+  xlab("Retweet category") +
+  ggtitle("Distribution of the #COVID19 tweets into retweet categories")
+```
+
+Most of the tweets appear to come from "N" and "S" categories which we should keep in mind when trying to predict tweets which will be retweeted more than 10 times. This makes sense intuitively since we are looking at the tweets posted recently only. 
+
+Let's display the sentiment distribution for each category
+```{r}
+afinn_RK %>%
+  ggplot(aes(retwtCAT,score)) +
+  geom_boxplot() +
+  xlab("Retweet category") +
+  ylab("Sentiment score") +
+  ggtitle("Sentiment distribution of #COVID19 tweets for each retweet category")
+```
+
+#### let's now do the multinomial logistic regression here
+```{r}
+modelMLR_A <- multinom(retwtCAT ~ followers + friends + score + mentions + hashtags, data = afinn_RK)
+summary(modelMLR_A)$AIC
+```
+```{r}
+modelMLR_F <- multinom(retwtCAT ~ followers, data = afinn_RK)
+summary(modelMLR_F)$AIC
+
+modelMLR_FR <- multinom(retwtCAT ~ friends, data = afinn_RK)
+summary(modelMLR_FR)$AIC
+
+modelMLR_S <- multinom(retwtCAT ~ score, data = afinn_RK)
+summary(modelMLR_S)$AIC
+
+modelMLR_M <- multinom(retwtCAT ~ mentions, data = afinn_RK)
+summary(modelMLR_M)$AIC
+
+modelMLR_H <- multinom(retwtCAT ~ hashtags, data = afinn_RK)
+summary(modelMLR_H)$AIC
+```
+
+```{r}
+tr2 <- sample(nrow(afinn_RK),round(nrow(afinn_RK)*0.6)) # split into training and test subsets
+trainRK <- afinn_RK[tr2,]
+testRK <- afinn_RK[-tr2,]
+```
+
+```{r}
+predRK_MLR <- predict(modelRK_MLR,testRK, type = "terms")
+predRK_MLR
+confusionMatrix(predRK_MLR, testRK$retwtCAT)
+```
+
+```{r}
+z <- summary(model3)$coefficients/summary(model3)$standard.errors
+
+z 
+
+# let's calculate the p-values for Wald's test to estimate the statistical significance for various 
+# 2-tailed z test
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+p
+```
+
+# let's extract the coefficients now
+```{r}
+exp(coef(model3))
+```
+# these coefficient allow us to estimate the relative risk ratios
+
+
+# Decision trees to determine retweet categories --------------------------
+
+Before we proceed with model fitting analysis we need to split the retweet categorical data into train and test subsets:
+```{r}
+tr2 <- sample(nrow(afinn_RK),round(nrow(afinn_RK)*0.6)) # split into training and test subsets
+trainRK <- afinn_RK[tr2,]
+testRK <- afinn_RK[-tr2,]
+
+modelRK_DT <- rpart(retwtCAT ~ followers + friends + score + mentions + hashtags, data = trainRK, method = "class")# ,xval = 5)
+
+predRK_DT <- predict(modelRK_DT,testRK, type = "class")
+
+rpart.plot(modelRK_DT)
+confusionMatrix(predRK_DT, testRK$retwtCAT)
+```
+# looks like a simple decision tree performs very poorly here
+
+# let's try with random forest instead
+
+modelRK_RF <- randomForest(retwtCAT ~ followers + friends + score + mentions + hashtags, data = trainRK, method = "class")
+
+predRK_RF <- predict(modelRK_RF,testRK, type = "class")
+
+confusionMatrix(predRK_RF, testRK$retwtCAT)
 ## Including Plots
-
+```
 You can also embed plots, for example:
 
 ```{r pressure, echo=FALSE}
