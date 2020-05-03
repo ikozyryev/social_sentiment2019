@@ -9,11 +9,12 @@ editor_options:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy = TRUE)
 ```
 
 # Overview
 
-The goal of my project was to determine whether the overall sentiment of the tweets with COVID19-related hashtags influenced whether the tweet would be retweeted and how many times. My initial hypothesis was that the more negative the tweet is the more retweets it will get because it has potential to stir emotions in many people. During the course of this project as I started to learn more about tweeter, I became more broadly interested in what parameters of the tweet effect the number of retweets. Specifically, I considered the following tweet variables:
+The goal of my project was to determine whether the overall sentiment of the tweets with COVID19-related hashtags influenced whether the tweet would be retweeted and how many times. My initial hypothesis was that the more negative the tweet is the more retweets it will get because it has potential to stir emotions in many people. During the course of this project, as I started to learn more about tweeter, I became more broadly interested in what parameters of the tweet effect the number of retweets. Specifically, I considered the following tweet variables:
 
 1. number of followers
 2. number of friends 
@@ -21,14 +22,16 @@ The goal of my project was to determine whether the overall sentiment of the twe
 4. number of user mentions 
 5. sentiment of the text
 
-While there 90 different variable associated with each tweet and many possibilities for further manipulation of the features, I chose to focus on the five above for two reasons:
+While there are 90 different variables associated with each tweet and many possibilities for further manipulation of the features, I chose to focus on the five above for two reasons:
 
 * Based on my intuition about social media it seemed likely that those parameters might matter.
 * I wanted to have a simpler model that can have interpretable implications about how one can spread positive sentiments and correct information on social media to a wide audience. Or alternatively, understand how *misinformation* related to the disease is effectively spread on social media. 
 
+In summary, I analyzed 50,000 tweets flagged with #COVID19 and discovered that some of the parameters in the list above play an important role in predicting whether the tweet is retweeted or not. Moreover, sentiment of the tweet has some influence on how many times a tweet is retweeted. 
+
 # Exploratory initial analysis
 
-First let's load all the libraries needed for the analysis of Twitter data. I used [rtweet](https://rtweet.info/) library to interface with the tweeter API. 
+First let's load all the libraries needed for the analysis of Twitter data. I used [rtweet](https://rtweet.info/) library to interface with the tweeter API. I chose to load libraries in a separate file for convience since I used 20 different libraries here (e.g. dplyr, readr, caret).
 
 ```{r message=FALSE}
 source('Load_libraries.R')
@@ -53,11 +56,13 @@ Many of the days recently, covid-19 related hashtags were among the top 10 trend
 
 Let's read *original* tweets and see what associated data is available for them. Thus, I have excluded all replies, retweets and quotes. I also only focused on the tweets in English since I am interested in analyzing the sentiment of their text. 
 
-```{r}
-covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 54000, include_rts = FALSE, lang = "en",  retryonratelimit = TRUE) 
+```{r warning=FALSE}
+covid19_st <- search_tweets("#COVID19 -filter:retweets -filter:quote -filter:replies",n = 50000, include_rts = FALSE, lang = "en",  retryonratelimit = TRUE) 
 colnames(covid19_st)[1:25]
 ```
-As we can see, there is a lot of parameters associated with each tweet but for now I am interested in only a few of those. There are 90 different parameters but I only displayed 25 for example above. Number of display columns can be modified to see all the available data types for each tweet.
+
+As we can see, there are a lot of parameters associated with each tweet but for now I am interested in only a few of those. There are 90 different parameters but I only displayed 25 for example above. The number of displayed columns can be modified to see all the available features for each tweet.
+
 ```{r}
 covid_twts <- covid19_st[,c("status_id","screen_name","text","retweet_count","followers_count","friends_count","mentions_user_id","hashtags","urls_url")]
 ```
@@ -91,12 +96,14 @@ twts_tidy <- covid_twts %>%
   mutate(hashtags = lengths(hashtags)) %>%
   mutate(urls = lengths(urls_url))
 ```
-It is important to notice that most of the tweets don't have any mentions with "NA" in place so we need to properly account for that. I first found which tweets don't have any associated mentions of users and then properly corrected the "mentions" count for those entries. 
+
+It is important to notice that most of the tweets don't have any mentions with "NA" in place so we need to properly account for that. I first find which tweets don't have any associated mentions of users and then properly corrected the "mentions" count for those entries. 
+
 ```{r}
 mentions_NAinds <- which(is.na(covid_twts$mentions_user_id)) # find which mentions are non-existent
 twts_tidy$mentions[mentions_NAinds] <- 0 # correct the number of mentions entries for those indeces
 ```
-Unlike for mentions, note that each tweet has at least one hashtag since we specifically searched for #COVID19 tweets to begin with. But we also need to account for the fact that not all tweets have mentioned urls:
+Unlike for mentions, note that each tweet has at least one hashtag since we specifically searched for #COVID19 tweets to begin with. But we also need to account for the fact that not all tweets have listed urls:
 ```{r}
 urls_NAinds <- which(is.na(covid_twts$urls_url)) # find which urls are non-existent
 twts_tidy$urls[urls_NAinds] <- 0 # correct the number of mentions entries for those indeces
@@ -111,6 +118,11 @@ twts_tidy <- twts_tidy %>%
   dplyr::select(-c(screen_name,mentions_user_id,urls_url))
 
 colnames(twts_tidy)
+```
+
+Save the cleaned data for future use if needed:
+```{r}
+write_csv(twts_tidy,"COVID19_50k_tweets_20200503.csv")
 ```
 
 ### Text analysis
@@ -129,14 +141,14 @@ common_words <- twts_clean %>%
 
 common_words$word
 ```
-While many of the top words listed have important meaning (like "us" or "people"), there additional words or letter that don't provide any useful information. In the next step, I remove unique stop words that don't add any meaning. 
+While many of the top words listed have important meaning (like "us" or "people"), there additional words or letters that don't provide any useful information. In the next step, I remove unique stop words that don't add any meaning. 
 ```{r}
 uniq_sw <- data.frame(word = c("s","covid","amp","t", "via", "m", "re", "don", "ve", "q", "gt", "o", "pm"))
-# 
+
 twts_clean <- twts_clean %>% 
    anti_join(uniq_sw, by = "word")
 ```
-Notice that I also removed "covid" since all the tweets have it because we specifically searched for #COVID19 and otherwise the wordcloud would be overwhelmed by the "covid" word (hashtag symbol and "19" were removed during the pre-processing step for the text).
+Notice that I also removed "covid" since all the tweets have it because we specifically searched for #COVID19 and otherwise the wordcloud would be overwhelmed by the "covid" word (hashtag symbol and "19" were removed during the pre-processing step for the text). 
 
 # Visualizing the most common words
 Let's see which words are the most popular in tweets after we cleanup the text data. 
@@ -148,8 +160,10 @@ twts_clean %>%
   with(wordcloud(word,n,random.order = FALSE, max.words = 100, colors = pal))
 ```
 
+It makes sense that "coronavirus" is the most popular word in the tweets overall. 
+
 # Sentiment analysis of the #COVID19 tweets 
-From the wordcloud above, we see that some of the most mentioned words are positive in meaning while others are very negative in meaning. We are now ready to perform tweet sentiment analysis to see whether the *overall* tweet sentiment influences the number of retweets (and therefore potentially the influence of a tweet on other users). In the first step I used "afinn" lexicon which assigned a positive or negative score to each word. The reason I decided to use afinn lexicon is that it doesn't purely flag the word as "positive" or "negative" but assigns degrees to how positive or negative each word is.. 
+From the wordcloud above, we see that some of the most mentioned words are positive in meaning while others are very negative in meaning. We are now ready to perform tweet sentiment analysis to see whether the *overall* tweet sentiment influences the number of retweets (and therefore potentially the influence of a tweet on other users). In the first step I used "afinn" lexicon which assigned a positive or negative score to each word. The reason I decided to use afinn lexicon is that it doesn't purely flag the word as "positive" or "negative" but assigns degrees to how positive or negative each word is. Given that tweet are very short in nature, I suspected that to have the best chance at predicting retweet degree I had to consider the degree of word sentiment.  
 
 Now lets assign a quantitative score to tweets to determine whether they are positive or negative. But first we need to determine which words from the afinn database appear in the tweets we are processing. 
 
@@ -180,9 +194,9 @@ We can also look at the most negative tweets (according to the afinn lexicon). H
 ```
 Those tweets do have negative sentiments and the ranking according to the afinn lexicon makes intuitive sense. 
 
-# Regression analysis for binary retweet status
+# Classification analysis for binary retweet status
 
-As first step, lets see what factors determine whether the tweet is retweeted at all. 
+As a first step, lets see what factors determine whether the tweet is retweeted at all. 
 
 ## Logistic regression
 
@@ -192,7 +206,7 @@ afinn_binary <- afinn_sentiment %>%
   mutate(retwtBi = ifelse(retweets > 0, "A", "N"))
 ```
 
-Convert the retweet indicator into a ranked factor: N < A
+Convert the retweet indicator into a ranked factor (any retweets is more than none): N < A
 
 ```{r}
 afinn_binary <- afinn_binary %>%
@@ -209,7 +223,7 @@ afinn_binary %>%
   ggtitle("Distribution of the #COVID19 tweets into retweet categories")
 ```
 
-As expected, most of the tweets are not reptweeted at all, but a significant portion got retweeted at least ones. In fact we can see how many tweets got retweeted: 
+As expected, most of the tweets are not retweeted at all, but a significant portion got retweeted at least ones. In fact we can see how many tweets got retweeted: 
 ```{r}
 summaryBi <- afinn_binary %>%
   group_by(retwtBi) %>%
@@ -217,7 +231,7 @@ summaryBi <- afinn_binary %>%
 summaryBi
 ```
 
-For this given run, looks like `summaryBi$n[2]/sum(summaryBi$n)*100`% of `sum(summaryBi$n)` tweets I am analyzing have been retweeted. 
+For this given run, looks like `summaryBi$n[2]/sum(summaryBi$n)*100` % of `sum(summaryBi$n)` tweets I am analyzing have been retweeted. 
 
 ### A brief intro to logistic regression
 The probability that a tweet is retweeted is $0<p(A)<1$.We can model such a probability distribution with a logistic function:
@@ -235,9 +249,9 @@ which is equivalent to the expression for $\sigma(t)$ above. Therefore, the odds
 
 $$ \frac{p}{1-p} = \text{exp}(\beta_0+\beta_1x_1+\beta_2x_2+\cdots\beta_kx_k)$$
 
-but more importantantly $logit(p)$ is 
+but more importantantly $logit(p)$ is  
 
-$$ \text{log} \left(\frac{p}{1-p}\right)=\beta_0+\beta_1x_1+\beta_2x_2+\cdots\beta_kx_k $$         
+$$ \text{log} \left(\frac{p}{1-p}\right)=\beta_0+\beta_1x_1+\beta_2x_2+\cdots\beta_kx_k $$           
 
 is linear in the fitting coefficients $\beta_k$. Alternatively, equation above can be represented as:
 
@@ -267,7 +281,7 @@ prob1LR <- predict(model1LR,testSet, type = "response")
 cl1LR <- ifelse(prob1LR > 0.5, "A", "N")
 ```
 
-Confusion matrix will provide a lot of valuable information on the model peformance. I set the positive class to "A" as we are interested in predicting whether the tweet with receive any retweets
+Confusion matrix will provide a lot of valuable information on the model peformance. I set the positive class to "A" as we are interested in predicting whether the tweet will receive any retweets
 
 ```{r}
 confusionMatrix(factor(cl1LR, levels = c("N","A")),testSet$retwtBi, positive = "A")
@@ -305,7 +319,7 @@ cl1DT <- predict(model1DT,testSet, type = "class")
 confusionMatrix(cl1DT,testSet$retwtBi, positive = "A")
 ```
 
-As we can see from the confusion matrix, a single decision tree performs better than the logistic regression on such important parameters as accuracy and sensitivity (recall). Therefore, there is a lot for potential for random forest approach to improve the predicting power of our model. 
+As we can see from the confusion matrix, a single decision tree performs better than the logistic regression on such important parameters as accuracy and sensitivity (recall). Therefore, there is a lot of potential for random forest approach to improve the predicting power of our model. 
 
 Let's fit the random forest model to the full data:
 
@@ -321,9 +335,8 @@ cl1RF <- predict(model1RF,testSet, type = "class") # predicted binary classifica
 # cl1RF
 confusionMatrix(cl1RF,testSet$retwtBi, positive = "A")
 ```
-In order to compare how different fitted model perform I will look at the ROC curves:
+In order to compare how different fitted model perform I will look at the ROC curves. Let's plot the ROC curve and compare the areas: 
 
-# let's plot the ROC curve
 ```{r warning = FALSE}
 bmrk = seq(0,1,by=0.01)
 caTools::colAUC(cbind(prob1LR,prob2LR,prob1RF, bmrk), testSet$retwtBi,plotROC = T)
@@ -331,7 +344,7 @@ caTools::colAUC(cbind(prob1LR,prob2LR,prob1RF, bmrk), testSet$retwtBi,plotROC = 
 
 Area under the ROC curve can be used to compare various models in order to pick the optimal one and we conclude that random forest model performs the best on this metric as well. I also plotted the benchmark line for reference.
 
-From the area under the ROC curve we can see that Logistic Regression model 2 (LR2) (fitted only on followers and mentions) performs better compared to LR1 model (fitted on all data). We can use cross-validation to try fitting different logistic regression models and seeing which one performs the best:  
+From the area under the ROC curve we can see that Logistic Regression model 2 (LR2) (fitted only on followers and mentions) performs better compared to LR1 model (fitted on all data). We can use cross-validation to try fitting different logistic regression models and see which one performs the best:  
 
 ```{r warning = FALSE}
 set.seed(42)
@@ -392,7 +405,7 @@ summary(
 )$statistics$Accuracy
 ```
 
-We can see that the model with all three statistically significant parameters from fitting model LR2 has the best accuracy. However, using only the number of followers in the logistic regression model provides a decent accuracy as well, which indicates that this is the most important parameter for predicting whether the tweet is retweeted or not. 
+We can see that the model with all three statistically significant parameters from fitting model LR2 has the best accuracy. However, using only the number of followers in the logistic regression model provides a decent accuracy as well, which indicates that this is the most important parameter for predicting whether the tweet is retweeted or not, which makes intuitive sense but it's great to see that our intuition is supported by the data as well. 
 
 ## Summary of the Binary Retweet Analysis
 We have used Logistic Regression to identify the most important tweet variables in determining whether it is retweeted or not. Such factors as number of followers, mentions of other users and number of hashtags turned out to be statiscatilly important. We further observed that number of **followers** is the most important mentric in predicting the propensity of the tweet to be retweeted. 
@@ -419,7 +432,7 @@ afinn_four <- afinn_sentiment %>%
   mutate(retwtCAT = ifelse(retweets == 0, "N",ifelse(retweets %in% 1:10, "S", ifelse(retweets %in% 11:100, "M", "L"))))
 ```
 
-Lets convert the categories for retweets into fanked factors since there is an inherent order to them this order will be used with the multivariate logistic regression or can be used for ordinal logistic regression. 
+Lets convert the categories for retweets into fanked factors since there is an inherent order to them. Ranked order will be used with the multivariate logistic regression or can be used for ordinal logistic regression. 
 ```{r}
 # afinn_RK <- afinn_five %>%
 #    mutate(retwtCAT = factor(retwtCAT,levels = c("N","S","M","L","V")))
@@ -448,13 +461,14 @@ afinn_RK %>%
   ggtitle("Sentiment distribution of #COVID19 tweets for each retweet category")
 ```
 
-Let's perform the multinomial logistic regression next since our oucome can be in one of the 4 categories: "N", "S", "M" or "L". 
+Next I perform the multinomial logistic regression next since the oucome can be in one of the 4 categories: "N", "S", "M" or "L". 
 
 ```{r}
 modelMLR_A <- multinom(retwtCAT ~ followers + friends + score + mentions + hashtags + urls, data = afinn_RK)
 summary(modelMLR_A)
 ```
-Notice that for all the fit coefficients are referenced to the "N" category:
+Notice that all the fit coefficients are referenced to the "N" category:
+
 $$ \text{log} \frac{Pr(CAT)}{Pr(N)} = \beta_0 + \beta^Tx$$ 
 where $CAT$ is "S", "M" or "L". 
 Let's estimate the statistical significance of the fit coefficients using the p-value for Wald's test:
@@ -497,7 +511,7 @@ testRK %>%
   ggtitle("Distribution of the #COVID19 tweets into retweet categories for test set")
 ```
 
-As we can see from the histograms, the relative distributions look very similar, which provides strong indication that the best model training and benchmarked will be extendable to other future tweet analysis on this topic.  
+As we can see from the histograms, the relative distributions look very similar, which provides strong indication that the best model according to training and benchmarking will be extendable to other future tweet analysis on this topic.  
 
 ```{r warning = FALSE}
 modelRK_LR1 <- glm(isSmall ~ followers + friends + hashtags + mentions + urls + score, data = trainRK, family = binomial(link="logit"))
@@ -527,7 +541,7 @@ clM_LR2 <- ifelse(probM_LR2 > 0.5, 1, 0) # predicted binary classification
 confusionMatrix(factor(clM_LR2), factor(testRK$isMedium),positive = '1')
 ```
 
-```{r}
+```{r warning=FALSE}
 probL_LR3 <- predict(modelRK_LR3,testRK, type = "response")
 clL_LR3 <- ifelse(probL_LR3 > 0.5, 1, 0) # predicted binary classification
 confusionMatrix(factor(clL_LR3), factor(testRK$isLarge),positive = '1')
@@ -537,7 +551,8 @@ It is important to note that while the accuracy for the logit model to predict "
 
 # Decision trees to determine retweet categories --------------------------
 
-Before we proceed with model fitting analysis we need to split the retweet categorical data into train and test subsets:
+I train the recursive partitioning model on the training dataset with 60% of the data we set aside before:
+
 ```{r}
 modelRK_DT <- rpart(retwtCAT ~ followers + friends + score + mentions + hashtags + urls, data = trainRK, method = "class")
 
@@ -546,9 +561,9 @@ predRK_DT <- predict(modelRK_DT,testRK, type = "class")
 rpart.plot(modelRK_DT)
 confusionMatrix(predRK_DT, testRK$retwtCAT)
 ```
-In fact it looks like a simple decision tree performs much better in predicting tweets in "S" and "M" categories. By comparing the $F_1 = \frac{2}{1/sensitivity + 1/specificity}$ score of the decision tree fit with the one-vs-all logistic regression models above, we can see that a nonlinear model performs much better here.  
+We can see that follower and friends are the only two features used here. In fact it looks like a simple decision tree performs much better in predicting tweets in "S" and "M" categories. By comparing the $F_1 = \frac{2}{1/sensitivity + 1/specificity}$ score of the decision tree fit with the one-vs-all logistic regression models above, we can see that a nonlinear model performs much better here.  
 
-** KNN classifier
+## KNN classifier
 
 I was interested in seeing how k-nearest-neighbors classifier will perform on this multivariate classification challenge for retweet categories. However, before we can efficiently apply it on our tweet data set, I needed to transform the tweet features since they are of very diferent scales: while mentions and urls are usually a small number, followers can be in the hundreds or thousands. Moreover, sentiment score can be positive or negative while all the other variables can only take values larger than zero. Thus, I rescaled and centered the features before applying knn classification:
 
@@ -567,22 +582,24 @@ knn_fit
 plot(knn_fit)
 ```
 
-It looks like using 30 neighbors provides the highest accuracy. However, we need to see how out model performs on the test data. 
+It looks like using 30 neighbors provides the highest accuracy. However, we need to see how our model performs on the test data. 
 
 ```{r}
 test_pred <- predict(knn_fit, testRK)
 confusionMatrix(test_pred, testRK$retwtCAT)
 ```
 
-Caret library makes it easy to try other machine learning methods. RandomForest performed well for the binary classification problem whether tweet will get retweeted or not so I excpeted it to do well here to. Let's see how it performs. Notice that I chose not too rescale the features since randomforest should be robust against different scales in the variables.
+Caret library makes it easy to try other machine learning methods. RandomForest performed well for the binary classification problem whether tweet will get retweeted or not so I excpected it to do well here to. Let's see how it performs. Notice that I chose not too rescale the features since randomforest should be robust against different scales in the variables.
 
 ```{r}
-trCtrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, search = 'random')
+set.seed(42)
+
+trCtrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3, search = 'grid')
 
 rf_fit <- train(retwtCAT ~ followers + friends + score + mentions + hashtags + urls, data = trainRK, method = "rf",
                  trControl = trCtrl,
                  metric = 'Accuracy',
-                 tuneLength = 10)
+                 tuneGrid = expand.grid(mtry = c(1,2,3,4,5,6)))
 
 ```
 Let's look at the results:
@@ -591,11 +608,86 @@ Let's look at the results:
 rf_fit
 plot(rf_fit)
 ```
-Let's see what the out-of-sample error is:
+From the cross-validation we conclude that using 2 selected predictors performs the best. Let's see what the out-of-sample error is:
 
 ```{r}
 test_pred <- predict(knn_fit, testRK)
 confusionMatrix(test_pred, testRK$retwtCAT)
 ```
 
+## Summary of the retweet degree prediction
+
+By performing one-vs-all logistic regression I identified that different features are important for predicting retweet outcome classes: for example, urls, hashtags and followers are statistically significant in order to predict tweets with >100 retweets, while mentions, friends and urls are the most important features for predicting the 1-10 retweet category. While I found that other tweet parameters influence the number of retweets much more than the sentiment score, analyzing the sentiment of the tweets can still be important for understanding the public opinion and it's change over time. Below I look at the tweet sentiments using "bing" lexicon instead.  
+
+# Use Bing lexicon for sentiment analysis ---------------------------------
+
+While "bing" lexicon only specifies whether a word is positive or negative it still can be useful for sentiment analysis
+
+```{r}
+twts_bing <- twts_clean %>%
+  inner_join(get_sentiments("bing"), by = 'word')
+```
+Let's look at the most popular positive and negative words:
+```{r warning = FALSE}
+twts_bing %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("red","blue"),max.words =100)
+```
+
+Notice that "trump" is among the most used words in positive tweets because "bing" lexicon asigns positive meaning to "trump". However, in the current situation, most likely all those tweets refer to the President Trump, some in the positive context while others in the negative. 
+```{r warning = FALSE}
+twts_bing %>%
+  ggplot(aes(retweets)) +
+  geom_bar() + 
+  xlim(0,75) + 
+  ylim(0,15000)
+```
+```{r}
+retwts_bing_sent <- twts_bing %>%
+  group_by(id,retweets,followers) %>%
+  # filter(retweets > 5) %>%
+  count(id,retweets,sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  mutate(word_cnt = positive + negative)
+
+retwts_bing_sent %>%
+  ggplot(aes(sentiment,retweets)) +
+  geom_bar(stat = "identity")
+```
+```{r}
+twts_bing %>%
+  group_by(sentiment) %>%
+  top_n(10, retweets) %>%
+  arrange(retweets) %>%
+  ungroup() %>%
+  mutate(word = factor(word, unique(word))) %>%
+  ungroup() %>%
+  ggplot(aes(word, retweets, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ sentiment, scales = "free", ncol = 2) +
+  coord_flip() +
+  labs(x = NULL, 
+       y = "Median # of retweets for tweets containing each word")
+```
+
+
+```{r}
+bing_word_counts <- twts_bing %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+```
 

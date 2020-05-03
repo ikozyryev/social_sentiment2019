@@ -8,7 +8,6 @@ library(qdapRegex) # for removing URLs from tweet text
 library(tm) # load the text mining package
 library(tidytext)
 library(tidyr)
-library(dplyr)
 library(textdata) # to load various text datasets for sentiment analysis
 library(reshape2)
 library(wordcloud)
