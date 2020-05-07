@@ -19,6 +19,8 @@ library(rpart) # for tree-based analysis
 library(caTools) # to plot th ROC curve
 library(rpart.plot) # for plotting decision trees
 library(randomForest) # for running randomForest regressions
+library(DMwR)
+library(MLmetrics)
 # library(rlang)
 #install.packages("tidyverse")
 # library(qdap) # to extract term frequency
